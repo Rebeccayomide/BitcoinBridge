@@ -156,3 +156,96 @@
         (ok true)
     )
 )
+
+;; Admin function: Mark outgoing transfer as processed
+(define-public (mark-transfer-processed (transfer-id uint))
+    (let ((transfer-data (unwrap! (map-get? pending-transfers { transfer-id: transfer-id })
+            ERR-TRANSFER-NOT-FOUND
+        )))
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+        (asserts! (not (get processed transfer-data)) ERR-ALREADY-PROCESSED)
+        (map-set pending-transfers { transfer-id: transfer-id }
+            (merge transfer-data { processed: true })
+        )
+        (print {
+            event: "transfer-processed",
+            transfer-id: transfer-id,
+        })
+        (ok true)
+    )
+)
+
+;; Admin function: Toggle bridge pause state
+(define-public (toggle-bridge-pause)
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+        (var-set bridge-paused (not (var-get bridge-paused)))
+        (print {
+            event: "bridge-pause-toggled",
+            paused: (var-get bridge-paused),
+        })
+        (ok (var-get bridge-paused))
+    )
+)
+
+;; Admin function: Add/remove supported network
+(define-public (update-network-support
+        (network (string-ascii 20))
+        (active bool)
+    )
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+        (map-set supported-networks { network: network } { active: active })
+        (print {
+            event: "network-support-updated",
+            network: network,
+            active: active,
+        })
+        (ok true)
+    )
+)
+
+;; Admin function: Emergency withdrawal (only if bridge is paused)
+(define-public (emergency-withdraw (amount uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+        (asserts! (var-get bridge-paused) ERR-BRIDGE-PAUSED)
+        (try! (as-contract (stx-transfer? amount tx-sender CONTRACT-OWNER)))
+        (print {
+            event: "emergency-withdrawal",
+            amount: amount,
+        })
+        (ok true)
+    )
+)
+
+;; Read-only functions
+(define-read-only (get-transfer-details (transfer-id uint))
+    (map-get? pending-transfers { transfer-id: transfer-id })
+)
+
+(define-read-only (get-completed-transfer (btc-tx-hash (buff 32)))
+    (map-get? completed-transfers { btc-tx-hash: btc-tx-hash })
+)
+
+(define-read-only (get-user-balance (user principal))
+    (default-to u0 (get locked-amount (map-get? user-balances { user: user })))
+)
+
+(define-read-only (get-bridge-stats)
+    {
+        total-locked: (var-get total-locked),
+        transfer-nonce: (var-get transfer-nonce),
+        bridge-paused: (var-get bridge-paused),
+        min-confirmations: MIN-CONFIRMATIONS,
+        bridge-fee: BRIDGE-FEE,
+    }
+)
+
+(define-read-only (is-network-supported (network (string-ascii 20)))
+    (is-valid-network network)
+)
+
+(define-read-only (get-contract-balance)
+    (stx-get-balance (as-contract tx-sender))
+)
